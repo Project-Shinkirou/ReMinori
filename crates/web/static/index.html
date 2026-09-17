@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>eden Web 开发版</title>
+    <link rel="stylesheet" href="/static/app.css">
+  </head>
+  <body>
+    <main class="shell">
+      <section class="stage" aria-label="游戏画布">
+        <canvas id="eden-canvas" width="1024" height="640"></canvas>
+      </section>
+
+      <section class="controls" aria-live="polite">
+        <p id="status" class="status">正在检查并加载…</p>
+        <div class="button-row">
+          <button id="select-directory" type="button" disabled>选择游戏目录</button>
+          <button id="import-save" type="button" disabled>导入存档</button>
+          <button id="export-saves" type="button" disabled>导出存档 ZIP</button>
+          <button id="clear-web-data" type="button" disabled>清除网页数据</button>
+        </div>
+      </section>
+    </main>
+    <dialog id="context-menu-dialog" class="platform-dialog">
+      <form method="dialog">
+        <h2>游戏菜单</h2>
+        <div class="dialog-grid">
+          <button value="toggle-panel" data-command="toggle-panel">显示/隐藏消息框</button>
+          <button value="auto" data-command="auto">自动播放</button>
+          <button value="skip" data-command="skip">跳过已读</button>
+          <button value="quick-save" data-command="quick-save">快速保存</button>
+          <button value="save" data-command="save">保存</button>
+          <button value="load" data-command="load">读取</button>
+          <button value="config" data-command="config">设置</button>
+          <button value="fullscreen" data-command="fullscreen">全屏</button>
+          <button value="windowed" data-command="windowed">退出全屏</button>
+          <button value="help" data-command="help">帮助</button>
+          <button value="website" data-command="website">官方网站</button>
+          <button value="title" data-command="title">返回标题</button>
+          <button value="exit" data-command="exit">退出</button>
+          <button value="cancel">取消</button>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="save-comment-dialog" class="platform-dialog">
+      <form method="dialog">
+        <h2>存档注释</h2>
+        <label for="save-comment-input">注释</label>
+        <input id="save-comment-input" name="comment" autocomplete="off">
+        <div class="dialog-actions">
+          <button value="cancel">取消</button>
+          <button value="ok">保存</button>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="import-save-dialog" class="platform-dialog">
+      <form method="dialog">
+        <h2>导入存档</h2>
+        <p id="import-save-name"></p>
+        <label for="import-save-slot">目标槽位（10–99）</label>
+        <input id="import-save-slot" name="slot" type="number" min="10" max="99" required>
+        <div class="dialog-actions">
+          <button value="cancel">取消</button>
+          <button value="ok">导入</button>
+        </div>
+      </form>
+    </dialog>
+    <script type="module" src="/static/bootstrap.js"></script>
+  </body>
+</html>

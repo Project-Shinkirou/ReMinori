@@ -1,0 +1,23 @@
+[package]
+name = "eden"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+
+console = []
+
+[build-dependencies]
+winresource = { version = "0.1", default-features = false }
+
+[dependencies]
+eden-engine = { path = "../engine" }
+eden-vm = { path = "../vm" }
+eden-formats = { path = "../formats" }
+winit.workspace = true
+raw-window-handle.workspace = true
+pollster.workspace = true
+env_logger.workspace = true
+log.workspace = true
+anyhow.workspace = true
+dirs.workspace = true

@@ -1,0 +1,11 @@
+[package]
+name = "eden-formats"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+encoding_rs.workspace = true
+flate2.workspace = true
+serde.workspace = true
+log.workspace = true
+anyhow.workspace = true

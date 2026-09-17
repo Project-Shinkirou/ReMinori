@@ -1,0 +1,43 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/formats",
+    "crates/vm",
+    "crates/engine",
+    "crates/game",
+    "crates/tools",
+    "crates/web",
+]
+
+[workspace.dependencies]
+
+winit = "0.30"
+raw-window-handle = "0.6"
+wgpu = "26"
+pollster = "0.4"
+bytemuck = { version = "1", features = ["derive"] }
+
+cpal = "0.15"
+symphonia = { version = "0.5", features = ["ogg", "vorbis", "wav", "pcm"] }
+
+fontdue = "0.9"
+ttf-parser = "0.25"
+
+flate2 = "1"
+encoding_rs = "0.8"
+png = "0.17"
+serde = { version = "1", features = ["derive"] }
+ron = "0.8"
+
+dirs = "6"
+anyhow = "1"
+log = "0.4"
+env_logger = "0.11"
+web-time = "1.1"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"

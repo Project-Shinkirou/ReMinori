@@ -1,0 +1,10 @@
+[package]
+name = "eden-vm"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+eden-formats = { path = "../formats" }
+serde.workspace = true
+log.workspace = true
+anyhow.workspace = true

@@ -1,0 +1,15 @@
+[package]
+name = "eden-tools"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+eden-formats = { path = "../formats" }
+eden-vm = { path = "../vm" }
+eden-engine = { path = "../engine" }
+png.workspace = true
+env_logger.workspace = true
+log.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+ron.workspace = true
