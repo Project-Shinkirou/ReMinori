@@ -1,0 +1,22 @@
+[package]
+name = "shinki-emu-ReMinori"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.92"
+license = "AGPL-3.0-only"
+publish = false
+build = "build.rs"
+
+[lib]
+name = "shinki_emu_ReMinori"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+anyhow.workspace = true
+log.workspace = true
+eden-engine = { path = "../engine" }
+eden-vm = { path = "../vm" }
+shinki-emu-abi = { git = "https://github.com/Project-Shinkirou/ShinkiEMU", rev = "035155c78761768bc088169a4eca982f82e9d577" }
+
+[build-dependencies]
+shinki-emu-build = { git = "https://github.com/Project-Shinkirou/ShinkiEMU", rev = "035155c78761768bc088169a4eca982f82e9d577" }

@@ -1278,7 +1278,7 @@ impl Renderer {
             return;
         }
         let texture = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("astra-final-frame"),
+            label: Some("shinki-final-frame"),
             size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
             mip_level_count: 1,
             sample_count: 1,
@@ -1289,7 +1289,7 @@ impl Renderer {
         });
         let view = texture.create_view(&Default::default());
         let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("astra-final-readback"),
+            label: Some("shinki-final-readback"),
             size: u64::from(width.div_ceil(64) * 256) * u64::from(height),
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,

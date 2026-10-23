@@ -1,8 +1,8 @@
 #![allow(non_snake_case)]
-//! AstraEMU C ABI v3 adapter around the original ReMinori Engine.
+//! ShinkiEMU C ABI v3 adapter around the original ReMinori Engine.
 mod config;
 mod platform;
-use astra_emu_abi as abi;
+use shinki_emu_abi as abi;
 use eden_engine::{ButtonState, Engine, InputEvent, InputKey, PointerButton};
 use eden_vm::RunState;
 use std::{
@@ -675,7 +675,7 @@ unsafe extern "C" fn open(
         let owned_shared = Arc::clone(&shared);
         let window = request.window;
         let worker = thread::Builder::new()
-            .name("astra-ReMinori".into())
+            .name("shinki-ReMinori".into())
             .spawn(move || worker(owned_shared, rx, settings, opened_tx, window))
             .map_err(Failure::runtime)?;
         let initialization = opened_rx.recv().map_err(Failure::runtime).and_then(|r| r);
@@ -976,7 +976,7 @@ static API: abi::CoreApi = abi::CoreApi {
 /// # Safety
 /// A non-null `output` must be aligned and writable for one table pointer.
 #[no_mangle]
-pub unsafe extern "C" fn astra_emu_query(
+pub unsafe extern "C" fn shinki_emu_query(
     version: u32,
     output: *mut *const abi::CoreApi,
 ) -> abi::Status {
@@ -1013,7 +1013,7 @@ mod tests {
     #[test]
     fn query_clears_incompatible_output() {
         let mut output = &API as *const _;
-        assert_eq!(unsafe { astra_emu_query(2, &mut output) }, abi::UNSUPPORTED);
+        assert_eq!(unsafe { shinki_emu_query(2, &mut output) }, abi::UNSUPPORTED);
         assert!(output.is_null());
     }
     #[test]

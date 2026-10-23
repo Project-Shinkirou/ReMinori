@@ -58,7 +58,7 @@ impl ArchiveProfile {
         let text = std::str::from_utf8(&bytes).map_err(|_| anyhow::anyhow!("archive profile is not UTF-8"))?;
         let mut profile: Self = toml::from_str(text.trim_start_matches('\u{feff}'))
             .map_err(|_| anyhow::anyhow!("invalid keys.v2 archive profile"))?;
-        ensure!(profile.schema == "astra.emu.musica.keys.v2", "unsupported archive profile schema");
+        ensure!(profile.schema == "shinki.emu.musica.keys.v2", "unsupported archive profile schema");
         ensure!(profile.paz_version <= 2, "unsupported PAZ version");
         ensure!(profile.archive_keys.len() == ROLES.len(), "profile must define all eight archive roles");
         for role in ROLES {
@@ -264,7 +264,7 @@ mod tests {
                 archive.extend(index);
                 archive.extend(data);
                 let profile = Arc::new(ArchiveProfile {
-                    schema: "astra.emu.musica.keys.v2".into(), paz_version: version,
+                    schema: "shinki.emu.musica.keys.v2".into(), paz_version: version,
                     index_size_xor: 0xaaaaaaaa, rc4_skip_crc: true,
                     archive_keys: BTreeMap::from([("scr".into(), RoleKeys {
                         index_key_hex: "11".repeat(32), data_key_hex: "22".repeat(32),

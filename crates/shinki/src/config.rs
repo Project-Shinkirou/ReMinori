@@ -1,5 +1,5 @@
 use crate::{bytes, Failure};
-use astra_emu_abi as abi;
+use shinki_emu_abi as abi;
 use std::{
     path::{Path, PathBuf},
     sync::LazyLock,

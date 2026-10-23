@@ -3967,7 +3967,7 @@ fn encode_gray_png(data: &[u8], w: u32, h: u32) -> Vec<u8> {
 }
 
 #[cfg(test)]
-mod astra_storage_tests {
+mod shinki_storage_tests {
     use super::*;
     #[test]
     fn native_save_root_can_change_between_sessions() {

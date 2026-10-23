@@ -1,5 +1,5 @@
 use crate::{bytes, platform_warning, Failure, Host};
-use astra_emu_abi as abi;
+use shinki_emu_abi as abi;
 use eden_engine::{
     ContextMenuCommand as Cmd, Engine, PlatformRequest, PlatformResponse, ScreenMode,
 };

@@ -7,7 +7,7 @@ members = [
     "crates/game",
     "crates/tools",
     "crates/web",
-    "crates/astra",
+    "crates/shinki",
 ]
 
 [workspace.dependencies]

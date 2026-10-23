@@ -1,26 +1,26 @@
 # ReMinori
 Rust-compatible implementation of the Minori engine
 
-## AstraEMU fork
+## ShinkiEMU fork
 
-The `astra` branch adapts upstream commit `79b00990324404bfbd496e7fa76c690cf040f744`
-to AstraEMU's native C ABI v3. Adapter sources are in `crates/astra`; the plugin
+The `shinki` branch adapts upstream commit `79b00990324404bfbd496e7fa76c690cf040f744`
+to ShinkiEMU's native C ABI v3. Adapter sources are in `crates/shinki`; the plugin
 ID is exactly `ReMinori`, and the original engine family is `musica`.
 The upstream VM, script IR, renderer, CPAL mixer, Media Foundation video decoder,
 menus and save implementation remain the gameplay implementation.
 
 ### Build and integration
 
-On Windows x64, use stable Rust (1.88 or newer), the MSVC build tools and Windows
+On Windows x64, use Rust 1.92 or newer, the MSVC build tools and Windows
 SDK. A hardware-capable wgpu backend and a working native audio output device are
 required for normal sessions. No second game window or Present loop is created.
 
 ```sh
-cargo build --locked --release -p astra-emu-ReMinori
+cargo build --locked --release --target x86_64-pc-windows-msvc -p shinki-emu-ReMinori
 ```
 
-The output is `target/release/astra_emu_ReMinori.dll`. Load
-`astra_emu_query(3, ...)`, initialize diagnostics, then use the returned `CoreApi`.
+The output is `target/x86_64-pc-windows-msvc/release/shinki_emu_ReMinori.dll`. Load
+`shinki_emu_query(3, ...)`, initialize diagnostics, then use the returned `CoreApi`.
 The worker owns and paces the original Engine at 60 Hz; host input/state/frame
 polls never advance the VM. The complete native GPU composition is read back as
 immutable, top-down BGRA8 CPU leases at the original 1024x640 raster. The Manager
@@ -35,11 +35,29 @@ Cancellation invalidates pending host platform requests; close joins the Engine,
 audio loader and movie decoder before returning. The dynamic library stays
 resident across closes and reopens.
 
+`build.rs` supports Windows x64 MSVC and writes target/profile plus the root
+AGPL-3.0 `LICENSE` to `OUT_DIR/core-build.json`. No separate core Resources are
+required: shader sources are compiled into the library; scripts, archives and
+optional `fonts/default.ttf` / `fonts/default.otf` overrides belong to the user's
+game tree. Without an override, the engine reads installed Windows Japanese
+fonts through GDI or the Windows Fonts directory. These fonts are not redistributed.
+Video requires Windows Media Foundation (including the Media Feature Pack on
+editions without it), audio uses CPAL/WASAPI, and wgpu uses the Windows graphics
+stack and installed driver. The release DLL imports `VCRUNTIME140.dll` and the
+Windows Universal CRT; install the matching Microsoft Visual C++ redistributable
+where needed. No Python, FFmpeg or separately shipped codec runtime is required.
+
+Binary publication still requires an exact corresponding-source archive,
+including Cargo.lock and build instructions, and the license/copyright notices
+for the resolved Rust dependency closure. The root `LICENSE` covers ReMinori,
+not all dependencies. No commercial game assets, private key profiles or
+Windows fonts belong in that source or binary package.
+
 The strictly typed configuration fields are:
 
 | Field | Type | Meaning |
 | --- | --- | --- |
-| `profile_path` | string/path | Empty uses upstream retail CD-ROM parameters. An explicit relative path is resolved against the game directory; `key.toml` reads a private `astra.emu.musica.keys.v2` profile in place. |
+| `profile_path` | string/path | Empty uses upstream retail CD-ROM parameters. An explicit relative path is resolved against the game directory; `key.toml` reads a private `shinki.emu.musica.keys.v2` profile in place. |
 | `save_directory` | string/path | Required absolute directory outside the game tree. Saves, settings, read flags, progress and decoded-movie cache stay under this root. |
 | `diagnostic_null_audio` | boolean | Defaults to false. True explicitly selects the upstream silent backend for diagnostics; it is not normal audio acceptance. |
 
@@ -99,37 +117,23 @@ contains numeric `phase`, `input_count`, `pc`, `wait_kind`, `wait_frames` and
 3=SaveLoad, 4=Memories, 5=CgGallery, 6=MusicMenu, 7=Config. Wait codes are 0=no VM,
 1=Running, 2=WaitFrames, 3=AwaitInput, 4=AwaitAutoMessage, 5=WaitShake,
 6=WaitScroll, 7=Ended. A changing frame counter alone is not evidence of playability.
-On 2026-10-23 the integrating Windows x64 host built the locked Release DLL
-and exercised an owned Steam eden installation through the production C ABI:
-hardware-GPU title and Chinese dialogue rendering, the real eight-channel
-default audio device, native settings/load pages, F5 quick-save, F9 restore
-(VM PC 24 back to the saved PC 18), a separate-process load through the native
-load page, pause/resume and resident-DLL close/reopen. Retained CPU pixels
-remained readable and unchanged after close. All 13 adapter/engine/format
-boundary regressions and adapter Clippy with warnings denied passed.
-The native desktop frontend also passed its locked Release consumer check.
-A further 140-second held-Control native-input run continued through VM
-positions 562 -> 11 and 701 -> 11 and returned normally, with 3132 CPU frames
-consumed; gameplay did not depend on host polling to advance.
-These checks cover the exercised representative flow, not all routes or
-unobserved media and device-listening acceptance.
 
 Boundary regressions are available with:
 
 ```sh
-cargo test --locked -p astra-emu-ReMinori
+cargo test --locked -p shinki-emu-ReMinori
 cargo test --locked -p eden-formats
 cargo test --locked -p eden-engine
 ```
 
 ### Attribution and modifications
 
-Upstream ReMinori is by luoyily and its contributors. The AstraEMU adaptation,
+Upstream ReMinori is by luoyily and its contributors. The ShinkiEMU adaptation,
 profile-driven PAZ support, offscreen GPU capture and lifecycle/storage changes
-are by the AstraEMU contributors (2026), under the same GNU Affero General Public
+are by the ShinkiEMU contributors (2026), under the same GNU Affero General Public
 License version 3 as this repository; see `LICENSE`. Existing notices are
-retained. The ABI crate is pinned to AstraEngine commit
-`6d9d691dcc8f3d768e40b5be1d6f37366cca62d8` and retains its own license.
+retained. The ABI crate and host-side build helper are pinned to ShinkiEMU commit
+`cb8d9dd22d7d0ab129085b324c94d6dc81fa19e3` and retain their own licenses.
 The Release profile uses unwinding so native panics are contained before reaching
 the C boundary. No game assets, private keys or decrypted commercial data are
 part of the fork.
