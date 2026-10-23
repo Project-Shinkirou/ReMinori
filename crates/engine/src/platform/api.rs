@@ -72,6 +72,7 @@ pub struct WindowGeometry {
 pub enum PlatformResponse {
     ScreenModeApplied { mode: ScreenMode, ok: bool },
     WindowGeometry(WindowGeometry),
+    WindowGeometryUnavailable,
     ContextMenuClosed { request_id: RequestId, command: Option<ContextMenuCommand> },
     SaveCommentClosed { request_id: RequestId, comment: Option<String> },
 }

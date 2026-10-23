@@ -4,6 +4,7 @@ pub mod blowfish_consts;
 pub mod encoding;
 pub mod paz;
 pub mod paz_keys;
+pub mod profile;
 pub mod resource;
 pub mod save;
 pub mod script;

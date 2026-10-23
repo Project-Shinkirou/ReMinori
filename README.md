@@ -1,6 +1,140 @@
 # ReMinori
 Rust-compatible implementation of the Minori engine
 
+## AstraEMU fork
+
+The `astra` branch adapts upstream commit `79b00990324404bfbd496e7fa76c690cf040f744`
+to AstraEMU's native C ABI v3. Adapter sources are in `crates/astra`; the plugin
+ID is exactly `ReMinori`, and the original engine family is `musica`.
+The upstream VM, script IR, renderer, CPAL mixer, Media Foundation video decoder,
+menus and save implementation remain the gameplay implementation.
+
+### Build and integration
+
+On Windows x64, use stable Rust (1.88 or newer), the MSVC build tools and Windows
+SDK. A hardware-capable wgpu backend and a working native audio output device are
+required for normal sessions. No second game window or Present loop is created.
+
+```sh
+cargo build --locked --release -p astra-emu-ReMinori
+```
+
+The output is `target/release/astra_emu_ReMinori.dll`. Load
+`astra_emu_query(3, ...)`, initialize diagnostics, then use the returned `CoreApi`.
+The worker owns and paces the original Engine at 60 Hz; host input/state/frame
+polls never advance the VM. The complete native GPU composition is read back as
+immutable, top-down BGRA8 CPU leases at the original 1024x640 raster. The Manager
+owns presentation. There is no render-extent capability or public headless CLI.
+Frame leases retain only pixel storage and can be released after session close.
+The CPU side uses three fixed preallocated frame slots. A slot is writable only
+when the worker is its sole owner. If the host retains every slot, gameplay and
+native GPU rendering continue without CPU readback or a new display generation;
+leased pixels are never overwritten. GPU targets and map-completion channels are
+also reused.
+Cancellation invalidates pending host platform requests; close joins the Engine,
+audio loader and movie decoder before returning. The dynamic library stays
+resident across closes and reopens.
+
+The strictly typed configuration fields are:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `profile_path` | string/path | Empty uses upstream retail CD-ROM parameters. An explicit relative path is resolved against the game directory; `key.toml` reads a private `astra.emu.musica.keys.v2` profile in place. |
+| `save_directory` | string/path | Required absolute directory outside the game tree. Saves, settings, read flags, progress and decoded-movie cache stay under this root. |
+| `diagnostic_null_audio` | boolean | Defaults to false. True explicitly selects the upstream silent backend for diagnostics; it is not normal audio acceptance. |
+
+The profile reader implements PAZ versions 0/1/2, per-role Blowfish keys, header
+XOR, type passwords, version-2 RC4 CRC skipping, movie transforms and zlib entries.
+It uses ReMinori's archive and resource APIs; it does not transfer execution to
+the owned Musica core. Private profile parser failures do not quote key material.
+Profile texture replacements remain confined to the game directory.
+Native scripts use strict per-file CP932/GBK selection: CP932 stays primary on
+ties, GBK is chosen only when it has fewer invalid source lines, and remaining
+invalid bytes fail decoding rather than becoming replacement characters. This
+matches the translated-edition source policy without adding secrets or encoding
+fields to keys.v2. Games that load GBK scripts use ReMinori's existing UTF-8 port
+save container so dialogue and comments survive native saves and reopens; pure
+retail CP932 saves retain their original format.
+Save roots are per Engine thread and can change when reopening the resident DLL;
+the old process-global `OnceLock` no longer pins the first save location.
+Ambient screenshot-dump environment variables are ignored by offscreen sessions.
+
+Original in-game menus are rendered into the frame. Native context menus and
+save-comment editing use the host's typed modal service. A missing or failed
+modal service produces an explicit session failure, not an invented user
+cancellation; only a real successful Cancel button produces a cancel response.
+F5/F9 do not require a modal and retain the original quick-save/load path.
+Best-effort window restoration, screen-mode failure, pointer capture and external
+help/URL requests retain warning-and-continue semantics with operation, status and
+error diagnostics. The host owns pointer capture and output-window geometry.
+
+Native audio prefers the existing stereo configurations on the same default
+device. A multichannel-only device uses its actual default format: the original
+stereo mixer feeds front left/right and clears the remaining channels. Callback
+scratch is fixed-size and reused, with no per-callback vector allocation.
+Enumeration, format, stream creation and stream start errors retain their native
+cause; the adapter never silently replaces failed audio with NullAudio.
+
+### Acceptance procedure
+
+The intended Steam sample is an owned `eden` installation with its existing
+private `keys.v2` `key.toml`. Pass `profile_path=key.toml` and an isolated writable
+`save_directory`; leave `diagnostic_null_audio=false`. Never copy private keys or
+commercial assets into this repository. Other games, including ef first/latter,
+are not added to the supported-games list by this adapter.
+
+Exercise the C ABI with real input: Enter starts a new game and advances dialogue,
+ControlLeft held enables the original fast-forward, F5 saves `eden0001.sav`, and
+F9 loads that file. A title NewGame click is `(937,114)`; title LoadGame is
+`(937,142)`. All coordinates are raster pixels. The bottom-right corner
+`(1000,620)` opens the native drawn menu; after its animation, QuickSave is
+`(970,500)`, Load `(934,600)` and Save `(890,575)`. Save/load slots also accept
+arrow keys and Enter. Windows double-click timing is preserved.
+
+Check title rendering, continuous story advancement, native audio and movies,
+save-file creation, restored VM position/frame, close/reopen with F9, cancellation
+and a frame lease held across close. Structured event `reminori.native_state`
+contains numeric `phase`, `input_count`, `pc`, `wait_kind`, `wait_frames` and
+`wait_voice`, without script names or dialogue. Phase codes are 1=Title, 2=Game,
+3=SaveLoad, 4=Memories, 5=CgGallery, 6=MusicMenu, 7=Config. Wait codes are 0=no VM,
+1=Running, 2=WaitFrames, 3=AwaitInput, 4=AwaitAutoMessage, 5=WaitShake,
+6=WaitScroll, 7=Ended. A changing frame counter alone is not evidence of playability.
+On 2026-10-23 the integrating Windows x64 host built the locked Release DLL
+and exercised an owned Steam eden installation through the production C ABI:
+hardware-GPU title and Chinese dialogue rendering, the real eight-channel
+default audio device, native settings/load pages, F5 quick-save, F9 restore
+(VM PC 24 back to the saved PC 18), a separate-process load through the native
+load page, pause/resume and resident-DLL close/reopen. Retained CPU pixels
+remained readable and unchanged after close. All 13 adapter/engine/format
+boundary regressions and adapter Clippy with warnings denied passed.
+The native desktop frontend also passed its locked Release consumer check.
+A further 140-second held-Control native-input run continued through VM
+positions 562 -> 11 and 701 -> 11 and returned normally, with 3132 CPU frames
+consumed; gameplay did not depend on host polling to advance.
+These checks cover the exercised representative flow, not all routes or
+unobserved media and device-listening acceptance.
+
+Boundary regressions are available with:
+
+```sh
+cargo test --locked -p astra-emu-ReMinori
+cargo test --locked -p eden-formats
+cargo test --locked -p eden-engine
+```
+
+### Attribution and modifications
+
+Upstream ReMinori is by luoyily and its contributors. The AstraEMU adaptation,
+profile-driven PAZ support, offscreen GPU capture and lifecycle/storage changes
+are by the AstraEMU contributors (2026), under the same GNU Affero General Public
+License version 3 as this repository; see `LICENSE`. Existing notices are
+retained. The ABI crate is pinned to AstraEngine commit
+`6d9d691dcc8f3d768e40b5be1d6f37366cca62d8` and retains its own license.
+The Release profile uses unwinding so native panics are contained before reaching
+the C boundary. No game assets, private keys or decrypted commercial data are
+part of the fork.
+
+
 ## Features
 
 - Runs games built on the Minori Engine directly from their original game archives — encrypted `.paz` containers are opened in place, no pre-extraction needed

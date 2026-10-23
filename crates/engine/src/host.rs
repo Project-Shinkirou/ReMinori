@@ -271,8 +271,8 @@ impl Host for EngineHost {
                 nodes: ir.nodes.clone(),
             })
     }
-    fn unknown(&mut self, raw: &Raw) {
-        log::warn!("未知命令跳过: {}", raw.text);
+    fn unknown(&mut self, _raw: &Raw) {
+        log::warn!("未知脚本命令跳过");
     }
 }
 fn arg_i(a: &Arg) -> i64 {

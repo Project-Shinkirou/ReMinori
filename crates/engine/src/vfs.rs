@@ -1,11 +1,13 @@
 use eden_formats::script::ScriptIr;
 use eden_formats::{decode, Ani, PazArchive, ResourceKind};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::fs;
 use std::path::Component;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::Arc;
+use eden_formats::profile::{ArchiveProfile, ProfileArchive};
 #[derive(Debug)]
 pub struct Image {
     pub w: u32,
@@ -161,7 +163,10 @@ fn validate_override_config(root: &Path) -> anyhow::Result<()> {
 #[derive(Clone, Debug)]
 pub enum MovieSource {
     File(PathBuf),
-    Archive { archive: PathBuf, name: String, xor_key: u8 },
+    Archive {
+        archive: PathBuf, name: String, xor_key: u8,
+        profile: Option<Arc<ArchiveProfile>>, cache_root: Option<PathBuf>,
+    },
     Unavailable(String),
 }
 impl MovieSource {
@@ -171,7 +176,7 @@ impl MovieSource {
                 Err(format!("movie source unavailable on this platform: {name}"))
             }
             MovieSource::File(path) => Ok(path.clone()),
-            MovieSource::Archive { archive, name, xor_key } => {
+            MovieSource::Archive { archive, name, xor_key, profile, cache_root } => {
                 let metadata = std::fs::metadata(archive)
                     .map_err(|error| format!("stat {}: {error}", archive.display()))?;
                 let modified = metadata
@@ -179,10 +184,9 @@ impl MovieSource {
                     .ok()
                     .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
                     .map_or(0, |duration| duration.as_nanos());
-                let cache_root = dirs::cache_dir()
-                    .unwrap_or_else(std::env::temp_dir)
-                    .join("eden")
-                    .join("movies");
+                let cache_root = cache_root.clone().unwrap_or_else(|| {
+                    dirs::cache_dir().unwrap_or_else(std::env::temp_dir).join("eden").join("movies")
+                });
                 std::fs::create_dir_all(&cache_root)
                     .map_err(|error| {
                         format!("create {}: {error}", cache_root.display())
@@ -204,11 +208,15 @@ impl MovieSource {
                     return Ok(output);
                 }
                 log::info!("解包影片 {safe_name} → {}", output.display());
-                let archive = PazArchive::open_main_with_material(archive, 9, *xor_key)
-                    .map_err(|error| format!("open movie archive: {error}"))?;
-                let bytes = archive
-                    .read(safe_name)
-                    .map_err(|error| format!("read movie {safe_name}: {error}"))?;
+                let bytes = if let Some(profile) = profile {
+                    ProfileArchive::open(archive, "mov", Arc::clone(profile))
+                        .and_then(|archive| archive.read(safe_name))
+                        .map_err(|error| format!("read profile movie: {error}"))?
+                } else {
+                    PazArchive::open_main_with_material(archive, 9, *xor_key)
+                        .and_then(|archive| archive.read(safe_name))
+                        .map_err(|error| format!("read movie archive: {error}"))?
+                };
                 let nonce = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .map_or(0, |duration| duration.as_nanos());
@@ -241,6 +249,10 @@ pub struct Vfs {
     scripts: RefCell<HashMap<String, Option<Rc<ScriptIr>>>>,
     images: RefCell<HashMap<String, Option<Rc<Image>>>>,
     anis: RefCell<HashMap<String, Option<Rc<Ani>>>>,
+    profile: Option<Arc<ArchiveProfile>>,
+    profile_archives: HashMap<String, ProfileArchive>,
+    movie_cache: Option<PathBuf>,
+    unicode_saves: Cell<bool>,
 }
 impl Vfs {
     pub fn open(root: impl Into<PathBuf>) -> anyhow::Result<Self> {
@@ -271,13 +283,39 @@ impl Vfs {
             scripts: RefCell::new(HashMap::new()),
             images: RefCell::new(HashMap::new()),
             anis: RefCell::new(HashMap::new()),
+            profile: None,
+            profile_archives: HashMap::new(),
+            movie_cache: None,
+            unicode_saves: Cell::new(false),
         })
+    }
+    pub fn open_profile(
+        root: PathBuf, profile: Arc<ArchiveProfile>, movie_cache: PathBuf,
+    ) -> anyhow::Result<Self> {
+        let movie_cache = movie_cache.join(format!("{:08x}", profile.cache_tag()));
+        let mut vfs = Self::open_with_override(root, None)?;
+        for role in eden_formats::profile::ROLES {
+            let archive = ProfileArchive::open(
+                &vfs.root.join(format!("{role}.paz")), role, Arc::clone(&profile),
+            )?;
+            vfs.profile_archives.insert(role.into(), archive);
+        }
+        for replacement in profile.texture_overrides.values() {
+            let path = vfs.root.join(replacement).canonicalize()?;
+            anyhow::ensure!(path.starts_with(vfs.root.canonicalize()?), "texture override escapes game root");
+        }
+        vfs.profile = Some(profile);
+        vfs.movie_cache = Some(movie_cache);
+        Ok(vfs)
+    }
+    pub fn set_movie_cache(&mut self, root: PathBuf) {
+        self.movie_cache = Some(root);
     }
     pub fn has_override(&self) -> bool {
         self.override_mount.is_some()
     }
-    pub fn has_script_overrides(&self) -> bool {
-        self.override_mount
+    pub fn requires_unicode_saves(&self) -> bool {
+        self.unicode_saves.get() || self.override_mount
             .as_ref()
             .is_some_and(|mount| mount.files.keys().any(|key| key.starts_with("scr/")))
     }
@@ -308,6 +346,11 @@ impl Vfs {
         opened
     }
     fn read_entry(&self, group: &'static str, name: &str) -> Option<Vec<u8>> {
+        if let Some(archive) = self.profile_archives.get(group) {
+            return archive.read(name).map_err(|error| {
+                log::warn!("读取 profile PAZ {group} 失败: {error}");
+            }).ok();
+        }
         let arc = self.archive(group)?;
         let entry = arc.find(name)?;
         let entry_name = entry.name.clone();
@@ -369,6 +412,8 @@ impl Vfs {
             archive: self.root.join("mov.paz"),
             name: safe_name.to_ascii_lowercase(),
             xor_key: self.xor_key,
+            profile: self.profile.clone(),
+            cache_root: self.movie_cache.clone(),
         }
     }
     pub fn script(&self, name: &str) -> Option<Rc<ScriptIr>> {
@@ -388,13 +433,47 @@ impl Vfs {
                 }
             }
         } else {
-            self.read_entry("scr", &key)
-                .map(|bytes| Rc::new(ScriptIr::parse_bytes(&bytes)))
+            self.read_entry("scr", &key).and_then(|bytes| {
+                match eden_formats::encoding::decode_script(&bytes) {
+                    Ok((encoding, text)) => {
+                        if encoding == eden_formats::encoding::ScriptEncoding::Gbk {
+                            self.unicode_saves.set(true);
+                        }
+                        Some(Rc::new(ScriptIr::parse(&text)))
+                    }
+                    Err(error) => {
+                        log::error!("native script decoding failed: {error}");
+                        None
+                    }
+                }
+            })
         };
         self.scripts.borrow_mut().insert(key, ir.clone());
         ir
     }
     pub fn image(&self, name: &str) -> Option<Rc<Image>> {
+        if let Some(replacement) = self.profile.as_ref().and_then(|profile| {
+            profile.texture_overrides.iter().find(|(source, _)| source.eq_ignore_ascii_case(name))
+                .map(|(_, replacement)| replacement)
+        }) {
+            let key = format!("~profile:{}", name.to_ascii_lowercase());
+            if let Some(image) = self.images.borrow().get(&key) {
+                return image.clone();
+            }
+            let path = self.root.join(replacement);
+            let image = std::fs::read(path).ok().and_then(|bytes| decode_png(&bytes).ok()).map(|mut image| {
+                for group in ["bg", "st", "sys"] {
+                    if let Some(base) = self.read_entry(group, name).and_then(|bytes| decode_png(&bytes).ok()) {
+                        image.logical_w = base.logical_w;
+                        image.logical_h = base.logical_h;
+                        break;
+                    }
+                }
+                Rc::new(image)
+            });
+            self.images.borrow_mut().insert(key, image.clone());
+            return image;
+        }
         let direct_path = Path::new(name);
         let direct_file = direct_path.is_file();
         let canonical = if name.starts_with("~anif:") {

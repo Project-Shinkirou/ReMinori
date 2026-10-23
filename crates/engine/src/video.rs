@@ -78,6 +78,7 @@ enum DecoderEvent {
 }
 struct MovieSession {
     cancel: Arc<AtomicBool>,
+    worker: Option<thread::JoinHandle<()>>,
     event_rx: mpsc::Receiver<DecoderEvent>,
     frame_rx: mpsc::Receiver<DecodedFrame>,
     frame_channel_closed: bool,
@@ -108,6 +109,18 @@ impl MovieSession {
         audio.stop_movie_audio();
     }
 }
+impl Drop for MovieSession {
+    fn drop(&mut self) {
+        self.cancel.store(true, Ordering::Release);
+        self.audio_stream.discard();
+        // Disconnect before joining: a full frame queue may block the decoder.
+        let (_, empty) = mpsc::sync_channel(1);
+        drop(std::mem::replace(&mut self.frame_rx, empty));
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
+}
 pub struct NativeVideoBackend {
     next_revision: u64,
     session: Option<MovieSession>,
@@ -130,9 +143,10 @@ impl NativeVideoBackend {
         let audio_stream = MovieAudioStream::new();
         let (event_tx, event_rx) = mpsc::channel();
         let (frame_tx, frame_rx) = mpsc::sync_channel(VIDEO_CHANNEL_CAPACITY);
-        spawn_decoder(source, cancel.clone(), audio_stream.clone(), event_tx, frame_tx);
+        let worker = spawn_decoder(source, cancel.clone(), audio_stream.clone(), event_tx, frame_tx);
         self.session = Some(MovieSession {
             cancel,
+            worker,
             event_rx,
             frame_rx,
             frame_channel_closed: false,
@@ -357,7 +371,7 @@ fn spawn_decoder(
     audio_stream: MovieAudioStream,
     event_tx: mpsc::Sender<DecoderEvent>,
     frame_tx: mpsc::SyncSender<DecodedFrame>,
-) {
+) -> Option<thread::JoinHandle<()>> {
     let spawn_error_tx = event_tx.clone();
     let result = thread::Builder::new()
         .name("eden-movie-decoder".into())
@@ -372,13 +386,14 @@ fn spawn_decoder(
                 let _ = event_tx.send(DecoderEvent::Failed(error));
             }
         });
-    if let Err(error) = result {
-        let _ = spawn_error_tx
-            .send(
-                DecoderEvent::Failed(
-                    format!("cannot spawn movie decoder thread: {error}"),
-                ),
-            );
+    match result {
+        Ok(worker) => Some(worker),
+        Err(error) => {
+            let _ = spawn_error_tx.send(DecoderEvent::Failed(
+                format!("cannot spawn movie decoder thread: {error}"),
+            ));
+            None
+        }
     }
 }
 #[cfg(windows)]

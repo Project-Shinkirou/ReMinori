@@ -288,3 +288,21 @@ pub fn write_body(data: &SaveData) -> String {
     s
 }
 
+#[cfg(test)]
+mod unicode_save_tests {
+    use super::*;
+    #[test]
+    fn native_port_save_preserves_translated_dialogue_and_comment() {
+        let fields = BACKLOG_FIELD_ORDER.iter().map(|key| {
+            ((*key).to_owned(), if *key == "CT1" { "中文剧情".to_owned() } else { String::new() })
+        }).collect();
+        let file = SaveFile {
+            header: SaveHeader { comment: "中文存档".into(), route: [0; 4] },
+            body: SaveData {
+                variables: vec![("public_fixture".into(), "中文文本".into())],
+                backlog: vec![BacklogEntryRaw { fields }],
+            },
+        };
+        assert_eq!(read_save_file(&write_port_sav(&file)).unwrap(), file);
+    }
+}

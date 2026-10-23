@@ -46,6 +46,7 @@ fn scan_int_prefix(s: &str) -> Option<i64> {
 }
 pub trait AudioBackend {
     fn tick(&mut self) {}
+    fn set_paused(&mut self, _paused: bool) -> anyhow::Result<()> { Ok(()) }
     fn play_bgm(
         &mut self,
         name: &str,

@@ -191,10 +191,19 @@ pub struct MaskTransitionDraw {
     pub rect: [f32; 4],
     pub progress: f32,
 }
+struct CpuReadback {
+    texture: wgpu::Texture,
+    view: wgpu::TextureView,
+    buffer: wgpu::Buffer,
+    width: u32,
+    height: u32,
+    map_tx: std::sync::mpsc::SyncSender<Result<(), wgpu::BufferAsyncError>>,
+    map_rx: std::sync::mpsc::Receiver<Result<(), wgpu::BufferAsyncError>>,
+}
 pub struct Renderer {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
-    surface: wgpu::Surface<'static>,
+    surface: Option<wgpu::Surface<'static>>,
     config: wgpu::SurfaceConfiguration,
     sprite_pipe: wgpu::RenderPipeline,
     glyph_pipe: wgpu::RenderPipeline,
@@ -219,6 +228,7 @@ pub struct Renderer {
     atlas_bind: Option<wgpu::BindGroup>,
     atlas_uploaded_gen: u64,
     vertex_buffer: Option<wgpu::Buffer>,
+    readback: Option<CpuReadback>,
 }
 impl Renderer {
     pub async fn new(
@@ -238,6 +248,18 @@ impl Renderer {
         );
         let surface = instance
             .create_surface(wgpu::SurfaceTarget::Window(Box::new(window)))?;
+        Self::initialize(instance, Some(surface), phys_w, phys_h).await
+    }
+    pub async fn new_offscreen(width: u32, height: u32) -> anyhow::Result<Self> {
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+        Self::initialize(instance, None, width, height).await
+    }
+    async fn initialize(
+        instance: wgpu::Instance,
+        surface: Option<wgpu::Surface<'static>>,
+        phys_w: u32,
+        phys_h: u32,
+    ) -> anyhow::Result<Self> {
         let adapter = instance
             .request_adapter(
                 &wgpu::RequestAdapterOptions {
@@ -250,11 +272,16 @@ impl Renderer {
                             }
                         })
                         .unwrap_or(wgpu::PowerPreference::LowPower),
-                    compatible_surface: Some(&surface),
+                    compatible_surface: surface.as_ref(),
                     force_fallback_adapter: false,
                 },
             )
             .await?;
+        if surface.is_none() {
+            let info = adapter.get_info();
+            anyhow::ensure!(info.device_type != wgpu::DeviceType::Cpu, "offscreen sessions require a hardware GPU");
+            log::info!("ReMinori offscreen GPU: {} {:?} {:?}", info.name, info.device_type, info.backend);
+        }
         let (device, queue) = adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
@@ -263,17 +290,11 @@ impl Renderer {
                 },
             )
             .await?;
-        let caps = surface.get_capabilities(&adapter);
-        let format = caps
-            .formats
-            .iter()
-            .copied()
-            .find(|f| {
-                matches!(
-                    f, wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Rgba8Unorm
-                )
-            })
-            .unwrap_or(caps.formats[0]);
+        // Use the same native pipelines for both presentation and CPU capture.
+        let caps = surface.as_ref().map(|surface| surface.get_capabilities(&adapter));
+        let format = caps.as_ref().and_then(|caps| caps.formats.iter().copied().find(|f| {
+            matches!(f, wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Rgba8Unorm)
+        })).unwrap_or(wgpu::TextureFormat::Bgra8Unorm);
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format,
@@ -281,10 +302,12 @@ impl Renderer {
             height: phys_h.max(1),
             present_mode: wgpu::PresentMode::Fifo,
             desired_maximum_frame_latency: 2,
-            alpha_mode: caps.alpha_modes[0],
+            alpha_mode: caps.as_ref().map_or(wgpu::CompositeAlphaMode::Auto, |caps| caps.alpha_modes[0]),
             view_formats: vec![],
         };
-        surface.configure(&device, &config);
+        if let Some(surface) = &surface {
+            surface.configure(&device, &config);
+        }
         let sampler = device
             .create_sampler(
                 &wgpu::SamplerDescriptor {
@@ -566,13 +589,17 @@ impl Renderer {
             atlas_bind: None,
             atlas_uploaded_gen: 0,
             vertex_buffer: None,
+            readback: None,
         })
     }
     pub fn resize(&mut self, w: u32, h: u32) {
         if w > 0 && h > 0 && (self.config.width != w || self.config.height != h) {
             self.config.width = w;
             self.config.height = h;
-            self.surface.configure(&self.device, &self.config);
+            if let Some(surface) = &self.surface {
+                surface.configure(&self.device, &self.config);
+            }
+            self.readback = None;
         }
     }
     pub fn config_width(&self) -> u32 {
@@ -1173,11 +1200,19 @@ impl Renderer {
         atlas: &mut GlyphAtlas,
         resources: &dyn ResourceStore,
     ) -> anyhow::Result<()> {
-        let frame = match self.surface.get_current_texture() {
+        if self.surface.is_none() {
+            self.ensure_readback(vp);
+            let view = self.readback.as_ref().unwrap().view.clone();
+            self.submit_to(vp, draw, mask_tr, atlas, resources, &view);
+            self.device.poll(wgpu::PollType::Wait)?;
+            return Ok(());
+        }
+        let surface = self.surface.as_ref().expect("surface checked above");
+        let frame = match surface.get_current_texture() {
             Ok(f) => f,
             Err(e) => {
                 log::warn!("获取表面失败: {e}（重配置后跳过本帧）");
-                self.surface.configure(&self.device, &self.config);
+                surface.configure(&self.device, &self.config);
                 return Ok(());
             }
         };
@@ -1187,11 +1222,12 @@ impl Renderer {
         Ok(())
     }
     pub fn render_clear(&mut self, rgba: [f64; 4]) -> anyhow::Result<()> {
-        let frame = match self.surface.get_current_texture() {
+        let surface = self.surface.as_ref().ok_or_else(|| anyhow::anyhow!("no presentation surface"))?;
+        let frame = match surface.get_current_texture() {
             Ok(frame) => frame,
             Err(error) => {
                 log::warn!("获取表面失败: {error}（重配置后跳过本帧）");
-                self.surface.configure(&self.device, &self.config);
+                surface.configure(&self.device, &self.config);
                 return Ok(());
             }
         };
@@ -1232,6 +1268,76 @@ impl Renderer {
         }
         self.queue.submit(Some(encoder.finish()));
         frame.present();
+        Ok(())
+    }
+    pub fn is_offscreen(&self) -> bool { self.surface.is_none() }
+    fn ensure_readback(&mut self, vp: &Viewport) {
+        let width = vp.phys_w;
+        let height = vp.phys_h;
+        if self.readback.as_ref().is_some_and(|target| target.width == width && target.height == height) {
+            return;
+        }
+        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("astra-final-frame"),
+            size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: self.config.format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&Default::default());
+        let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("astra-final-readback"),
+            size: u64::from(width.div_ceil(64) * 256) * u64::from(height),
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let (map_tx, map_rx) = std::sync::mpsc::sync_channel(1);
+        self.readback = Some(CpuReadback { texture, view, buffer, width, height, map_tx, map_rx });
+    }
+    pub fn render_cpu_into(
+        &mut self,
+        vp: &Viewport,
+        draw: &FrameDraw,
+        mask_tr: Option<&MaskTransitionDraw>,
+        atlas: &mut GlyphAtlas,
+        resources: &dyn ResourceStore,
+        pixels: &mut [u8],
+    ) -> anyhow::Result<()> {
+        let width = vp.phys_w;
+        let height = vp.phys_h;
+        anyhow::ensure!(pixels.len() == width as usize * height as usize * 4, "CPU frame slot has incorrect size");
+        let bpr = width.div_ceil(64) * 256;
+        self.ensure_readback(vp);
+        let view = self.readback.as_ref().unwrap().view.clone();
+        self.submit_to(vp, draw, mask_tr, atlas, resources, &view);
+        let target = self.readback.as_ref().unwrap();
+        let mut encoder = self.device.create_command_encoder(&Default::default());
+        encoder.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture: &target.texture, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &target.buffer,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0, bytes_per_row: Some(bpr), rows_per_image: Some(height),
+                },
+            },
+            wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+        );
+        self.queue.submit([encoder.finish()]);
+        let tx = target.map_tx.clone();
+        target.buffer.slice(..).map_async(wgpu::MapMode::Read, move |result| { let _ = tx.send(result); });
+        self.device.poll(wgpu::PollType::Wait)?;
+        target.map_rx.recv()??;
+        let mapped = target.buffer.slice(..).get_mapped_range();
+        for (output, row) in pixels.chunks_exact_mut(width as usize * 4).zip(mapped.chunks_exact(bpr as usize)) {
+            output.copy_from_slice(&row[..output.len()]);
+        }
+        drop(mapped);
+        target.buffer.unmap();
         Ok(())
     }
     pub fn render_offscreen(

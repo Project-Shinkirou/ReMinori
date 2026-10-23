@@ -35,9 +35,13 @@ use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::sync::OnceLock;
+use std::cell::RefCell as SavePathCell;
 use std::time::Duration;
-static SAVE_DIR: OnceLock<PathBuf> = OnceLock::new();
+thread_local! {
+    // Every native Engine is thread-confined. A session may select a new root
+    // before constructing its services, including when the DLL stays loaded.
+    static SAVE_DIR: SavePathCell<Option<PathBuf>> = const { SavePathCell::new(None) };
+}
 const USER_DATA_DIR: &str = "userdata";
 fn resolve_save_dir() -> PathBuf {
     if let Some(exe_dir) = std::env::current_exe()
@@ -219,6 +223,9 @@ pub struct Engine {
     start: web_time::Instant,
 }
 impl Engine {
+    pub fn set_paused(&mut self, paused: bool) -> anyhow::Result<()> {
+        self.audio.borrow_mut().set_paused(paused)
+    }
     #[cfg(not(target_arch = "wasm32"))]
     pub fn new(
         window: impl wgpu::WindowHandle + 'static,
@@ -241,12 +248,58 @@ impl Engine {
         let audio: Rc<RefCell<dyn AudioBackend>> = match CpalAudio::new(
             Rc::clone(&vfs),
         ) {
-            Some(audio) => Rc::new(RefCell::new(audio)),
-            None => {
-                log::warn!("音频输出不可用，回退静音后端");
+            Ok(audio) => Rc::new(RefCell::new(audio)),
+            Err(error) => {
+                log::warn!("音频输出不可用，回退静音后端: {error:#}");
                 Rc::new(RefCell::new(NullAudio::default()))
             }
         };
+        Self::assemble_native(renderer, vfs, audio)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn new_offscreen(
+        root: PathBuf,
+        profile: Option<PathBuf>,
+        save_directory: PathBuf,
+        diagnostic_null_audio: bool,
+        cancelled: &dyn Fn() -> bool,
+    ) -> anyhow::Result<Self> {
+        Self::set_save_dir(save_directory.clone())?;
+        anyhow::ensure!(!cancelled(), "native session cancelled");
+        let vfs = Rc::new(if let Some(path) = profile {
+            Vfs::open_profile(
+                root, eden_formats::profile::ArchiveProfile::read(&path)?,
+                save_directory.join("movies"),
+            )?
+        } else {
+            let mut vfs = Vfs::open(root)?;
+            vfs.set_movie_cache(save_directory.join("movies"));
+            vfs
+        });
+        anyhow::ensure!(!cancelled(), "native session cancelled");
+        let script = vfs.script("a001.sc").ok_or_else(|| anyhow::anyhow!("initial script is unavailable"))?;
+        anyhow::ensure!(script.nodes.iter().any(|node| !matches!(
+            node.kind, eden_formats::script::NodeKind::Raw(_) | eden_formats::script::NodeKind::NoOp(_)
+        )), "initial script contains no executable instructions");
+        anyhow::ensure!(vfs.image("topmenu0.png").is_some(), "title image is unavailable");
+        anyhow::ensure!(!cancelled(), "native session cancelled");
+        let renderer = pollster::block_on(Renderer::new_offscreen(1024, 640))?;
+        anyhow::ensure!(!cancelled(), "native session cancelled");
+        let audio: Rc<RefCell<dyn AudioBackend>> = if diagnostic_null_audio {
+            log::warn!("explicit diagnostic NullAudio selected");
+            Rc::new(RefCell::new(NullAudio::default()))
+        } else {
+            Rc::new(RefCell::new(CpalAudio::new(Rc::clone(&vfs))?))
+        };
+        anyhow::ensure!(!cancelled(), "native session cancelled");
+        Self::assemble_native(renderer, vfs, audio)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    fn assemble_native(
+        renderer: Renderer,
+        vfs: Rc<Vfs>,
+        audio: Rc<RefCell<dyn AudioBackend>>,
+    ) -> anyhow::Result<Self> {
         let cg_seen = Rc::new(RefCell::new(crate::cgmode::load_cgseen()));
         let read_history = Rc::new(
             RefCell::new(
@@ -1214,8 +1267,23 @@ impl Engine {
             .or_else(|| vm.globals().get("prohibitSaveLoad"));
         v.is_some_and(|s| !s.is_empty() && s != "0")
     }
-    pub(crate) fn save_dir() -> std::path::PathBuf {
-        SAVE_DIR.get_or_init(resolve_save_dir).clone()
+    pub fn save_dir() -> std::path::PathBuf {
+        SAVE_DIR.with(|slot| {
+            slot.borrow_mut().get_or_insert_with(resolve_save_dir).clone()
+        })
+    }
+    pub fn set_save_dir(path: PathBuf) -> anyhow::Result<()> {
+        anyhow::ensure!(path.is_absolute(), "save directory must be absolute");
+        std::fs::create_dir_all(&path)?;
+        anyhow::ensure!(probe_writable(&path), "save directory is not writable");
+        SAVE_DIR.with(|slot| *slot.borrow_mut() = Some(path));
+        Ok(())
+    }
+    pub fn shutdown(&mut self) {
+        self.movie.borrow_mut().cleanup(&mut *self.audio.borrow_mut());
+        self.audio.borrow_mut().stop_all();
+        self.settings.borrow().persist();
+        self.snapshot_progress();
     }
     fn open_save_load(&mut self, mode: u8) {
         let page = self.last_save_page;
@@ -1240,6 +1308,12 @@ impl Engine {
     }
     pub fn platform_response(&mut self, response: PlatformResponse) {
         match response {
+            PlatformResponse::WindowGeometryUnavailable => {
+                if self.pending_exit {
+                    self.pending_exit = false;
+                    self.quit = true;
+                }
+            }
             PlatformResponse::ScreenModeApplied { mode, ok } => {
                 if self.pending_screen_mode != Some(mode) {
                     return;
@@ -2226,7 +2300,7 @@ impl Engine {
         let bytes = if self
             .native_vfs
             .as_ref()
-            .is_some_and(|vfs| vfs.has_script_overrides())
+            .is_some_and(|vfs| vfs.requires_unicode_saves())
         {
             eden_formats::write_port_sav(&file)
         } else {
@@ -2325,6 +2399,17 @@ impl Engine {
         Ok(())
     }
     pub fn render(&mut self) {
+        if let Err(error) = self.render_result(None) {
+            log::error!("渲染失败: {error:?}");
+        }
+    }
+    pub fn render_cpu_into(&mut self, pixels: &mut [u8]) -> anyhow::Result<()> {
+        self.render_result(Some(pixels))
+    }
+    pub fn render_without_readback(&mut self) -> anyhow::Result<()> {
+        self.render_result(None)
+    }
+    fn render_result(&mut self, pixels: Option<&mut [u8]>) -> anyhow::Result<()> {
         self.frame_no += 1;
         if std::env::var_os("EDEN_TRACE").is_some() && self.frame_no % 300 == 0 {
             log::info!(
@@ -2459,25 +2544,23 @@ impl Engine {
                 self.quit = true;
             }
         }
-        if let Some(path) = std::env::var_os("EDEN_DUMP_ATLAS") {
-            let (aw, ah) = self.atlas.atlas_dims();
-            let data = self.atlas.atlas_data().to_vec();
-            let path = std::path::PathBuf::from(path);
-            let _ = std::fs::write(&path, encode_gray_png(&data, aw, ah));
-            std::env::remove_var("EDEN_DUMP_ATLAS");
-            log::info!("图集导出 → {}", path.display());
+        if !self.renderer.is_offscreen() {
+            if let Some(path) = std::env::var_os("EDEN_DUMP_ATLAS") {
+                let (aw, ah) = self.atlas.atlas_dims();
+                let data = self.atlas.atlas_data().to_vec();
+                let path = std::path::PathBuf::from(path);
+                let _ = std::fs::write(&path, encode_gray_png(&data, aw, ah));
+                std::env::remove_var("EDEN_DUMP_ATLAS");
+                log::info!("图集导出 → {}", path.display());
+            }
         }
-        if let Err(e) = self
-            .renderer
-            .render(
-                &vp,
-                &draw,
-                mask_tr.as_ref(),
-                &mut self.atlas,
-                self.resources.as_ref(),
-            )
-        {
-            log::error!("渲染失败: {e:?}");
+        match pixels {
+            Some(pixels) => self.renderer.render_cpu_into(
+                &vp, &draw, mask_tr.as_ref(), &mut self.atlas, self.resources.as_ref(), pixels,
+            ),
+            None => self.renderer.render(
+                &vp, &draw, mask_tr.as_ref(), &mut self.atlas, self.resources.as_ref(),
+            ),
         }
     }
     fn compose_scene_layer(
@@ -3883,3 +3966,20 @@ fn encode_gray_png(data: &[u8], w: u32, h: u32) -> Vec<u8> {
     out
 }
 
+#[cfg(test)]
+mod astra_storage_tests {
+    use super::*;
+    #[test]
+    fn native_save_root_can_change_between_sessions() {
+        let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let root = std::env::temp_dir().join(format!("reminori-storage-{}-{nonce}", std::process::id()));
+        let first = root.join("first");
+        let second = root.join("second");
+        Engine::set_save_dir(first.clone()).unwrap();
+        assert_eq!(Engine::save_dir(), first);
+        Engine::set_save_dir(second.clone()).unwrap();
+        assert_eq!(Engine::save_dir(), second);
+        SAVE_DIR.with(|slot| *slot.borrow_mut() = None);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}

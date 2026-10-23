@@ -9,3 +9,5 @@ flate2.workspace = true
 serde.workspace = true
 log.workspace = true
 anyhow.workspace = true
+toml = "0.8"
+crc32fast = "1"
