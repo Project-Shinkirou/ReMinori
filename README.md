@@ -11,9 +11,10 @@ menus and save implementation remain the gameplay implementation.
 
 ### Build and integration
 
-On Windows x64, use Rust 1.92 or newer, the MSVC build tools and Windows
+On Windows x64, use Rust 1.98 or newer, the MSVC build tools and Windows
 SDK. A hardware-capable wgpu backend and a working native audio output device are
 required for normal sessions. No second game window or Present loop is created.
+The ShinkiEMU adapter uses Rust edition 2024; upstream crates retain their editions.
 
 ```sh
 cargo build --locked --release --target x86_64-pc-windows-msvc -p shinki-emu-ReMinori
