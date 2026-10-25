@@ -11,6 +11,10 @@ build = "build.rs"
 name = "shinki_emu_ReMinori"
 crate-type = ["cdylib", "rlib"]
 
+[features]
+default = []
+dynamic-plugin-export = []
+
 [dependencies]
 anyhow.workspace = true
 log.workspace = true

@@ -11,6 +11,7 @@ Modified by the ShinkiEMU contributors, 2026, under AGPL-3.0-only; see `LICENSE`
 - Added explicit private `keys.v2` profile selection, isolated save-directory support, lifecycle/storage handling, and original-mixer output mapping for multichannel hardware. The upstream PAZ key/data tables in `crates/formats/src/paz_keys.rs` remain unchanged.
 - Migrated project/adapter integration to ShinkiEMU naming, pinned the shared ABI and build helper to `9cd899babbb54cbc84c3e9fbddfe192c2f9200c8`, and moved only the adapter to Rust edition 2024 / Rust 1.98 minimum.
 - Added this modification/rebuild notice to the distributed core's license material. No commercial game assets or user-supplied private key profiles are part of the core package.
+- Added macOS and iOS device/simulator targets to the adapter build. `dynamic-plugin-export` enables the unmangled query and private logger for the macOS `cdylib`; static iOS `rlib` registration calls the Rust-path query and reuses the host logger. License assets remain in `core-build.json`.
 
 ## Source and rebuild
 
