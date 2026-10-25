@@ -975,7 +975,7 @@ static API: abi::CoreApi = abi::CoreApi {
 ///
 /// # Safety
 /// A non-null `output` must be aligned and writable for one table pointer.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn shinki_emu_query(
     version: u32,
     output: *mut *const abi::CoreApi,
