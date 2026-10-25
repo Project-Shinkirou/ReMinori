@@ -134,10 +134,12 @@ profile-driven PAZ support, offscreen GPU capture and lifecycle/storage changes
 are by the ShinkiEMU contributors (2026), under the same GNU Affero General Public
 License version 3 as this repository; see `LICENSE`. Existing notices are
 retained. The ABI crate and host-side build helper are pinned to ShinkiEMU commit
-`cb8d9dd22d7d0ab129085b324c94d6dc81fa19e3` and retain their own licenses.
+`9cd899babbb54cbc84c3e9fbddfe192c2f9200c8` and retain their own licenses.
 The Release profile uses unwinding so native panics are contained before reaching
-the C boundary. No game assets, private keys or decrypted commercial data are
-part of the fork.
+the C boundary. No commercial game assets, user-supplied private key profiles or
+decrypted commercial data are part of the fork. Upstream's compiled PAZ tables
+remain in `crates/formats/src/paz_keys.rs`. See `MODIFICATIONS.md` for dated
+changes and corresponding-source rebuild directions.
 
 
 ## Features

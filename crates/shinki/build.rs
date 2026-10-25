@@ -19,6 +19,7 @@ fn main() {
         .expect("locating the fork source root");
     manifest.licenses = vec![
         BuildAsset { source: root.join("LICENSE"), dest: "licenses/ReMinori/LICENSE".into() },
+        BuildAsset { source: root.join("MODIFICATIONS.md"), dest: "licenses/ReMinori/MODIFICATIONS.md".into() },
     ];
     write_core_build_manifest(&manifest).expect("writing ReMinori core-build.json");
 }
