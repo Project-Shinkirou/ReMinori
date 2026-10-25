@@ -9,6 +9,9 @@ fn main() {
     println!("cargo:rerun-if-changed=Cargo.toml");
     let mut manifest = CoreBuildManifest::new("ReMinori", "rust-cdylib")
         .expect("Cargo must provide the core build target and profile");
+    if manifest.target.ends_with("-apple-darwin") {
+        println!("cargo:rustc-cdylib-link-arg=-Wl,-install_name,@rpath/libshinki_emu_ReMinori.dylib");
+    }
     assert!(
         matches!(
             manifest.target.as_str(),
