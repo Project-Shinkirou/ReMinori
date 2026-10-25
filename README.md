@@ -17,7 +17,7 @@ required for normal sessions. No second game window or Present loop is created.
 The ShinkiEMU adapter uses Rust edition 2024; upstream crates retain their editions.
 
 ```sh
-cargo build --locked --release --target x86_64-pc-windows-msvc -p shinki-emu-ReMinori
+cargo build --locked --release --target x86_64-pc-windows-msvc -p shinki-emu-ReMinori --features dynamic-plugin-export
 ```
 
 The output is `target/x86_64-pc-windows-msvc/release/shinki_emu_ReMinori.dll`. Load

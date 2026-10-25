@@ -28,4 +28,4 @@ cargo xtask build --core ReMinori --target x86_64-pc-windows-msvc --release
 cargo xtask test --core ReMinori
 ```
 
-The product's `build/cores.toml` selects the exact modified fork revision. The independent adapter can also be built from that fork with `cargo build --locked --release --target x86_64-pc-windows-msvc -p shinki-emu-ReMinori`. A hardware-capable wgpu backend and real audio output are required for normal gameplay, not for the adapter's unit tests. Full corresponding-source and third-party notices accompany release distribution; this notice does not replace their license texts.
+The product's `build/cores.toml` selects the exact modified fork revision. The independent adapter can also be built from that fork with `cargo build --locked --release --target x86_64-pc-windows-msvc -p shinki-emu-ReMinori --features dynamic-plugin-export`. A hardware-capable wgpu backend and real audio output are required for normal gameplay, not for the adapter's unit tests. Full corresponding-source and third-party notices accompany release distribution; this notice does not replace their license texts.
