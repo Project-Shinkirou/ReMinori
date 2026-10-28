@@ -35,19 +35,25 @@ use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::cell::RefCell as SavePathCell;
 use std::time::Duration;
 thread_local! {
-    // Every native Engine is thread-confined. A session may select a new root
-    // before constructing its services, including when the DLL stays loaded.
-    static SAVE_DIR: SavePathCell<Option<PathBuf>> = const { SavePathCell::new(None) };
+    // ShinkiEMU: one resident library opens sessions for different games, each
+    // on its own Engine worker thread, so the root is per thread rather than
+    // upstream's process-wide OnceLock.
+    static SAVE_DIR: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
 }
 const USER_DATA_DIR: &str = "userdata";
 fn resolve_save_dir() -> PathBuf {
-    if let Some(exe_dir) = std::env::current_exe()
+    let exe_dir = std::env::current_exe()
         .ok()
-        .and_then(|exe| exe.parent().map(Path::to_path_buf))
-    {
+        .and_then(|exe| exe.parent().map(Path::to_path_buf));
+    resolve_save_dir_in(exe_dir.as_deref(), dirs::document_dir())
+}
+// Upstream's exe-adjacent resolution, with the base directory and Documents
+// supplied by the caller: the embedded adapter runs inside the Manager process,
+// so the game directory stands in for the original executable's directory.
+fn resolve_save_dir_in(exe_dir: Option<&Path>, documents: Option<PathBuf>) -> PathBuf {
+    if let Some(exe_dir) = exe_dir {
         let dir = exe_dir.join(USER_DATA_DIR);
         if std::fs::create_dir_all(&dir).is_ok() && probe_writable(&dir) {
             log::info!("用户数据目录（exe 同目录）: {}", dir.display());
@@ -57,11 +63,17 @@ fn resolve_save_dir() -> PathBuf {
             "exe 同目录不可写 {}，用户数据回退文档目录", dir.display()
         );
     }
-    let dir = dirs::document_dir()
+    let dir = documents
         .unwrap_or_else(|| PathBuf::from("."))
         .join("eden")
         .join(USER_DATA_DIR);
     log::info!("用户数据目录（文档目录）: {}", dir.display());
+    dir
+}
+#[cfg(not(target_arch = "wasm32"))]
+fn select_game_save_dir(game: &Path, documents: Option<PathBuf>) -> PathBuf {
+    let dir = resolve_save_dir_in(Some(game), documents);
+    SAVE_DIR.with(|slot| *slot.borrow_mut() = Some(dir.clone()));
     dir
 }
 fn probe_writable(dir: &Path) -> bool {
@@ -260,21 +272,15 @@ impl Engine {
     pub fn new_offscreen(
         root: PathBuf,
         profile: Option<PathBuf>,
-        save_directory: PathBuf,
         diagnostic_null_audio: bool,
         cancelled: &dyn Fn() -> bool,
     ) -> anyhow::Result<Self> {
-        Self::set_save_dir(save_directory.clone())?;
+        select_game_save_dir(&root, dirs::document_dir());
         anyhow::ensure!(!cancelled(), "native session cancelled");
         let vfs = Rc::new(if let Some(path) = profile {
-            Vfs::open_profile(
-                root, eden_formats::profile::ArchiveProfile::read(&path)?,
-                save_directory.join("movies"),
-            )?
+            Vfs::open_profile(root, eden_formats::profile::ArchiveProfile::read(&path)?)?
         } else {
-            let mut vfs = Vfs::open(root)?;
-            vfs.set_movie_cache(save_directory.join("movies"));
-            vfs
+            Vfs::open(root)?
         });
         anyhow::ensure!(!cancelled(), "native session cancelled");
         let script = vfs.script("a001.sc").ok_or_else(|| anyhow::anyhow!("initial script is unavailable"))?;
@@ -1267,17 +1273,10 @@ impl Engine {
             .or_else(|| vm.globals().get("prohibitSaveLoad"));
         v.is_some_and(|s| !s.is_empty() && s != "0")
     }
-    pub fn save_dir() -> std::path::PathBuf {
+    pub(crate) fn save_dir() -> std::path::PathBuf {
         SAVE_DIR.with(|slot| {
             slot.borrow_mut().get_or_insert_with(resolve_save_dir).clone()
         })
-    }
-    pub fn set_save_dir(path: PathBuf) -> anyhow::Result<()> {
-        anyhow::ensure!(path.is_absolute(), "save directory must be absolute");
-        std::fs::create_dir_all(&path)?;
-        anyhow::ensure!(probe_writable(&path), "save directory is not writable");
-        SAVE_DIR.with(|slot| *slot.borrow_mut() = Some(path));
-        Ok(())
     }
     pub fn shutdown(&mut self) {
         self.movie.borrow_mut().cleanup(&mut *self.audio.borrow_mut());
@@ -3966,19 +3965,73 @@ fn encode_gray_png(data: &[u8], w: u32, h: u32) -> Vec<u8> {
     out
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod shinki_storage_tests {
     use super::*;
+
+    fn scratch(name: &str) -> PathBuf {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir()
+            .join(format!("reminori-{name}-{}-{nonce}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
     #[test]
-    fn native_save_root_can_change_between_sessions() {
-        let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
-        let root = std::env::temp_dir().join(format!("reminori-storage-{}-{nonce}", std::process::id()));
-        let first = root.join("first");
-        let second = root.join("second");
-        Engine::set_save_dir(first.clone()).unwrap();
-        assert_eq!(Engine::save_dir(), first);
-        Engine::set_save_dir(second.clone()).unwrap();
-        assert_eq!(Engine::save_dir(), second);
+    fn session_uses_userdata_in_game_directory() {
+        let root = scratch("game-userdata");
+        let game = root.join("eden");
+        std::fs::create_dir_all(&game).unwrap();
+        let documents = root.join("Documents");
+        let selected = select_game_save_dir(&game, Some(documents.clone()));
+        assert_eq!(selected, game.join("userdata"));
+        assert!(selected.is_dir());
+        assert_eq!(Engine::save_dir(), selected);
+        assert!(!documents.exists());
+        SAVE_DIR.with(|slot| *slot.borrow_mut() = None);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn unwritable_game_userdata_falls_back_to_documents_eden() {
+        let root = scratch("game-fallback");
+        let game = root.join("eden");
+        std::fs::create_dir_all(&game).unwrap();
+        // A file named `userdata` makes the game-side directory uncreatable.
+        std::fs::write(game.join("userdata"), b"not a directory").unwrap();
+        let documents = root.join("Documents");
+        let selected = select_game_save_dir(&game, Some(documents.clone()));
+        assert_eq!(selected, documents.join("eden").join("userdata"));
+        assert_eq!(Engine::save_dir(), selected);
+        assert!(game.join("userdata").is_file());
+        SAVE_DIR.with(|slot| *slot.borrow_mut() = None);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn concurrent_sessions_keep_their_own_game_userdata() {
+        let root = scratch("game-threads");
+        let games = [root.join("first"), root.join("second")];
+        for game in &games {
+            std::fs::create_dir_all(game).unwrap();
+        }
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        let (go_tx, go_rx) = std::sync::mpsc::channel::<()>();
+        let first = games[0].clone();
+        let worker = std::thread::spawn(move || {
+            select_game_save_dir(&first, None);
+            ready_tx.send(()).unwrap();
+            go_rx.recv().unwrap();
+            Engine::save_dir()
+        });
+        ready_rx.recv().unwrap();
+        select_game_save_dir(&games[1], None);
+        go_tx.send(()).unwrap();
+        assert_eq!(worker.join().unwrap(), games[0].join("userdata"));
+        assert_eq!(Engine::save_dir(), games[1].join("userdata"));
         SAVE_DIR.with(|slot| *slot.borrow_mut() = None);
         std::fs::remove_dir_all(root).unwrap();
     }

@@ -165,7 +165,7 @@ pub enum MovieSource {
     File(PathBuf),
     Archive {
         archive: PathBuf, name: String, xor_key: u8,
-        profile: Option<Arc<ArchiveProfile>>, cache_root: Option<PathBuf>,
+        profile: Option<Arc<ArchiveProfile>>,
     },
     Unavailable(String),
 }
@@ -176,7 +176,7 @@ impl MovieSource {
                 Err(format!("movie source unavailable on this platform: {name}"))
             }
             MovieSource::File(path) => Ok(path.clone()),
-            MovieSource::Archive { archive, name, xor_key, profile, cache_root } => {
+            MovieSource::Archive { archive, name, xor_key, profile } => {
                 let metadata = std::fs::metadata(archive)
                     .map_err(|error| format!("stat {}: {error}", archive.display()))?;
                 let modified = metadata
@@ -184,9 +184,15 @@ impl MovieSource {
                     .ok()
                     .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
                     .map_or(0, |duration| duration.as_nanos());
-                let cache_root = cache_root.clone().unwrap_or_else(|| {
-                    dirs::cache_dir().unwrap_or_else(std::env::temp_dir).join("eden").join("movies")
-                });
+                let mut cache_root = dirs::cache_dir()
+                    .unwrap_or_else(std::env::temp_dir)
+                    .join("eden")
+                    .join("movies");
+                // Movies decoded with a private profile stay apart from the
+                // retail-parameter cache entries for the same archive.
+                if let Some(profile) = profile {
+                    cache_root.push(format!("{:08x}", profile.cache_tag()));
+                }
                 std::fs::create_dir_all(&cache_root)
                     .map_err(|error| {
                         format!("create {}: {error}", cache_root.display())
@@ -251,7 +257,6 @@ pub struct Vfs {
     anis: RefCell<HashMap<String, Option<Rc<Ani>>>>,
     profile: Option<Arc<ArchiveProfile>>,
     profile_archives: HashMap<String, ProfileArchive>,
-    movie_cache: Option<PathBuf>,
     unicode_saves: Cell<bool>,
 }
 impl Vfs {
@@ -285,14 +290,10 @@ impl Vfs {
             anis: RefCell::new(HashMap::new()),
             profile: None,
             profile_archives: HashMap::new(),
-            movie_cache: None,
             unicode_saves: Cell::new(false),
         })
     }
-    pub fn open_profile(
-        root: PathBuf, profile: Arc<ArchiveProfile>, movie_cache: PathBuf,
-    ) -> anyhow::Result<Self> {
-        let movie_cache = movie_cache.join(format!("{:08x}", profile.cache_tag()));
+    pub fn open_profile(root: PathBuf, profile: Arc<ArchiveProfile>) -> anyhow::Result<Self> {
         let mut vfs = Self::open_with_override(root, None)?;
         for role in eden_formats::profile::ROLES {
             let archive = ProfileArchive::open(
@@ -305,11 +306,7 @@ impl Vfs {
             anyhow::ensure!(path.starts_with(vfs.root.canonicalize()?), "texture override escapes game root");
         }
         vfs.profile = Some(profile);
-        vfs.movie_cache = Some(movie_cache);
         Ok(vfs)
-    }
-    pub fn set_movie_cache(&mut self, root: PathBuf) {
-        self.movie_cache = Some(root);
     }
     pub fn has_override(&self) -> bool {
         self.override_mount.is_some()
@@ -413,7 +410,6 @@ impl Vfs {
             name: safe_name.to_ascii_lowercase(),
             xor_key: self.xor_key,
             profile: self.profile.clone(),
-            cache_root: self.movie_cache.clone(),
         }
     }
     pub fn script(&self, name: &str) -> Option<Rc<ScriptIr>> {

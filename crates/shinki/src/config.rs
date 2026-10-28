@@ -5,7 +5,7 @@ use std::{
     sync::LazyLock,
 };
 
-struct Schema([abi::ConfigField; 3]);
+struct Schema([abi::ConfigField; 2]);
 // All nested schema spans point to immutable library-lifetime constants.
 unsafe impl Send for Schema {}
 unsafe impl Sync for Schema {}
@@ -43,10 +43,14 @@ static SCHEMA: LazyLock<Schema> = LazyLock::new(|| {
     null_audio.default_value.kind = abi::VALUE_BOOL;
     null_audio.max_bytes = 0;
     Schema([
-            string("profile_path", "Archive profile", "keys.v2 key.toml; empty selects the upstream retail CD-ROM parameters.", abi::CONFIG_FLAG_FILE_PATH | abi::CONFIG_FLAG_GAME_RELATIVE),
-            string("save_directory", "Isolated save directory", "Required absolute directory outside the game; all native saves, settings and movie cache stay here.", abi::CONFIG_FLAG_DIRECTORY_PATH),
-            null_audio,
-        ])
+        string(
+            "profile_path",
+            "Archive profile",
+            "keys.v2 key.toml; empty selects the upstream retail CD-ROM parameters.",
+            abi::CONFIG_FLAG_FILE_PATH | abi::CONFIG_FLAG_GAME_RELATIVE,
+        ),
+        null_audio,
+    ])
 });
 pub fn fields() -> &'static [abi::ConfigField] {
     &SCHEMA.0
@@ -54,7 +58,6 @@ pub fn fields() -> &'static [abi::ConfigField] {
 pub struct Configuration {
     pub game: PathBuf,
     pub profile: Option<PathBuf>,
-    pub saves: PathBuf,
     pub null_audio: bool,
 }
 pub unsafe fn parse(request: &abi::OpenRequest) -> Result<Configuration, Failure> {
@@ -79,7 +82,6 @@ pub unsafe fn parse(request: &abi::OpenRequest) -> Result<Configuration, Failure
     .canonicalize()
     .map_err(|_| Failure::invalid("game directory does not exist"))?;
     let mut profile = None;
-    let mut saves = PathBuf::new();
     let mut null_audio = false;
     for entry in entries {
         match unsafe { entry.id.text(128) }.map_err(Failure::status)? {
@@ -98,49 +100,13 @@ pub unsafe fn parse(request: &abi::OpenRequest) -> Result<Configuration, Failure
                     );
                 }
             }
-            "save_directory" => {
-                saves =
-                    PathBuf::from(unsafe { entry.value.text.text(4096) }.map_err(Failure::status)?)
-            }
             "diagnostic_null_audio" => null_audio = entry.value.integer == 1,
             _ => return Err(Failure::invalid("unknown core configuration")),
         }
     }
-    if !saves.is_absolute() {
-        return Err(Failure::invalid(
-            "save_directory must be an explicit absolute directory",
-        ));
-    }
-    // Resolve the existing ancestor before creating anything. Reject junctions
-    // back into the game and game ancestors as well as direct game paths.
-    let mut ancestor = saves.as_path();
-    let mut suffix = Vec::new();
-    while !ancestor.exists() {
-        suffix.push(
-            ancestor
-                .file_name()
-                .ok_or_else(|| Failure::invalid("invalid save directory"))?
-                .to_owned(),
-        );
-        ancestor = ancestor
-            .parent()
-            .ok_or_else(|| Failure::invalid("invalid save directory"))?;
-    }
-    let mut resolved = ancestor
-        .canonicalize()
-        .map_err(|_| Failure::invalid("cannot resolve save directory"))?;
-    for part in suffix.into_iter().rev() {
-        resolved.push(part);
-    }
-    if resolved.starts_with(&game) || game.starts_with(&resolved) {
-        return Err(Failure::invalid(
-            "save directory must be isolated from the game",
-        ));
-    }
     Ok(Configuration {
         game,
         profile,
-        saves: resolved,
         null_audio,
     })
 }

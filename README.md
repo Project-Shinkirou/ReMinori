@@ -58,7 +58,6 @@ The strictly typed configuration fields are:
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `profile_path` | string/path | Empty uses upstream retail CD-ROM parameters. An explicit relative path is resolved against the game directory; `key.toml` reads a private `shinki.emu.musica.keys.v2` profile in place. |
-| `save_directory` | string/path | Required absolute directory outside the game tree. Saves, settings, read flags, progress and decoded-movie cache stay under this root. |
 | `diagnostic_null_audio` | boolean | Defaults to false. True explicitly selects the upstream silent backend for diagnostics; it is not normal audio acceptance. |
 
 The profile reader implements PAZ versions 0/1/2, per-role Blowfish keys, header
@@ -73,8 +72,28 @@ matches the translated-edition source policy without adding secrets or encoding
 fields to keys.v2. Games that load GBK scripts use ReMinori's existing UTF-8 port
 save container so dialogue and comments survive native saves and reopens; pure
 retail CP932 saves retain their original format.
-Save roots are per Engine thread and can change when reopening the resident DLL;
-the old process-global `OnceLock` no longer pins the first save location.
+Standalone ReMinori uses `userdata/` beside its executable. The embedded adapter
+runs inside the ShinkiEMU Manager process, so it passes the game directory in
+place of the executable directory and uses `<game>/userdata/`. If that
+directory cannot be created or written, the upstream fallback
+`Documents/eden/userdata/` applies unchanged. ReMinori stores `edenNNNN.sav`
+and `edenNNNN.png` thumbnails, `edenPMNNNN.sav` quick saves,
+encrypted/compressed `system.dat`, `settings.tsv`, `readflags.bin` and
+`cgseen.tsv` there. Decoded movies use upstream's cache,
+`<OS cache dir>/eden/movies/`; movies decoded with a private profile go into a
+per-profile subdirectory of it. The save root is per Engine thread instead of
+upstream's process-wide `OnceLock`, because one resident library opens
+sessions for different games.
+
+The original Windows retail eden executable uses `<game>/save/`, not
+`userdata/`. To use original saves in ReMinori, copy the contents of `save/`
+to the active `userdata/` directory. To move compatible retail-format saves
+back, copy them from `userdata/` to `save/`. Back up both directories and do
+not overwrite existing files. ReMinori's UTF-8 port saves for GBK scripts are
+not retail-format saves and should not be assumed compatible with original eden.
+ShinkiEMU beta.1/beta.2 required a user-chosen `save_directory`; copy the files
+from that directory into the active `userdata/` directory by hand, without
+overwriting existing files.
 Ambient screenshot-dump environment variables are ignored by offscreen sessions.
 
 Original in-game menus are rendered into the frame. Native context menus and
@@ -96,10 +115,10 @@ cause; the adapter never silently replaces failed audio with NullAudio.
 ### Acceptance procedure
 
 The intended Steam sample is an owned `eden` installation with its existing
-private `keys.v2` `key.toml`. Pass `profile_path=key.toml` and an isolated writable
-`save_directory`; leave `diagnostic_null_audio=false`. Never copy private keys or
-commercial assets into this repository. Other games, including ef first/latter,
-are not added to the supported-games list by this adapter.
+private `keys.v2` `key.toml`. Pass `profile_path=key.toml` and leave
+`diagnostic_null_audio=false`. Never copy private keys or commercial assets
+into this repository. Other games, including ef first/latter, are not added
+to the supported-games list by this adapter.
 
 Exercise the C ABI with real input: Enter starts a new game and advances dialogue,
 ControlLeft held enables the original fast-forward, F5 saves `eden0001.sav`, and

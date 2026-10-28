@@ -374,7 +374,6 @@ fn worker(
         let mut engine = Engine::new_offscreen(
             settings.game,
             settings.profile,
-            settings.saves,
             settings.null_audio,
             &|| shared.host.cancelled(),
         )
