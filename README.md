@@ -11,12 +11,13 @@ menus and save implementation remain the gameplay implementation.
 
 ### Build and integration
 
-On Windows x64, use Rust 1.92 or newer, the MSVC build tools and Windows
+On Windows x64, use Rust 1.98 or newer, the MSVC build tools and Windows
 SDK. A hardware-capable wgpu backend and a working native audio output device are
 required for normal sessions. No second game window or Present loop is created.
+The ShinkiEMU adapter uses Rust edition 2024; upstream crates retain their editions.
 
 ```sh
-cargo build --locked --release --target x86_64-pc-windows-msvc -p shinki-emu-ReMinori
+cargo build --locked --release --target x86_64-pc-windows-msvc -p shinki-emu-ReMinori --features dynamic-plugin-export
 ```
 
 The output is `target/x86_64-pc-windows-msvc/release/shinki_emu_ReMinori.dll`. Load
@@ -152,10 +153,12 @@ profile-driven PAZ support, offscreen GPU capture and lifecycle/storage changes
 are by the ShinkiEMU contributors (2026), under the same GNU Affero General Public
 License version 3 as this repository; see `LICENSE`. Existing notices are
 retained. The ABI crate and host-side build helper are pinned to ShinkiEMU commit
-`cb8d9dd22d7d0ab129085b324c94d6dc81fa19e3` and retain their own licenses.
+`9cd899babbb54cbc84c3e9fbddfe192c2f9200c8` and retain their own licenses.
 The Release profile uses unwinding so native panics are contained before reaching
-the C boundary. No game assets, private keys or decrypted commercial data are
-part of the fork.
+the C boundary. No commercial game assets, user-supplied private key profiles or
+decrypted commercial data are part of the fork. Upstream's compiled PAZ tables
+remain in `crates/formats/src/paz_keys.rs`. See `MODIFICATIONS.md` for dated
+changes and corresponding-source rebuild directions.
 
 
 ## Features

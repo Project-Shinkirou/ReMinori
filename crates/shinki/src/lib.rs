@@ -114,8 +114,11 @@ struct DiagnosticSink(abi::Diagnostics);
 unsafe impl Send for DiagnosticSink {}
 unsafe impl Sync for DiagnosticSink {}
 static DIAGNOSTICS: OnceLock<DiagnosticSink> = OnceLock::new();
+#[cfg(feature = "dynamic-plugin-export")]
 struct Logger;
+#[cfg(feature = "dynamic-plugin-export")]
 static LOGGER: Logger = Logger;
+#[cfg(feature = "dynamic-plugin-export")]
 impl log::Log for Logger {
     fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
         metadata.level() <= log::Level::Info
@@ -537,9 +540,12 @@ unsafe extern "C" fn initialize(
             return Err(Failure::status(abi::UNSUPPORTED));
         }
         if DIAGNOSTICS.get().is_none() {
-            log::set_logger(&LOGGER).map_err(Failure::runtime)?;
+            #[cfg(feature = "dynamic-plugin-export")]
+            {
+                log::set_logger(&LOGGER).map_err(Failure::runtime)?;
+                log::set_max_level(log::LevelFilter::Info);
+            }
             let _ = DIAGNOSTICS.set(DiagnosticSink(*diagnostics));
-            log::set_max_level(log::LevelFilter::Info);
         }
         Ok(())
     })
@@ -974,7 +980,7 @@ static API: abi::CoreApi = abi::CoreApi {
 ///
 /// # Safety
 /// A non-null `output` must be aligned and writable for one table pointer.
-#[no_mangle]
+#[cfg_attr(feature = "dynamic-plugin-export", unsafe(no_mangle))]
 pub unsafe extern "C" fn shinki_emu_query(
     version: u32,
     output: *mut *const abi::CoreApi,

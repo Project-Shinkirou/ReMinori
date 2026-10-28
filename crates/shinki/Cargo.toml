@@ -1,8 +1,8 @@
 [package]
 name = "shinki-emu-ReMinori"
 version = "0.1.0"
-edition = "2021"
-rust-version = "1.92"
+edition = "2024"
+rust-version = "1.98"
 license = "AGPL-3.0-only"
 publish = false
 build = "build.rs"
@@ -10,6 +10,10 @@ build = "build.rs"
 [lib]
 name = "shinki_emu_ReMinori"
 crate-type = ["cdylib", "rlib"]
+
+[features]
+default = []
+dynamic-plugin-export = []
 
 [dependencies]
 anyhow.workspace = true
