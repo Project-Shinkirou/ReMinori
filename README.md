@@ -86,11 +86,13 @@ per-profile subdirectory of it. The save root is per Engine thread instead of
 upstream's process-wide `OnceLock`, because one resident library opens
 sessions for different games.
 
-The original Windows retail eden executable uses `<game>/save/`, not
-`userdata/`. To use original saves in ReMinori, copy the contents of `save/`
-to the active `userdata/` directory. To move compatible retail-format saves
-back, copy them from `userdata/` to `save/`. Back up both directories and do
-not overwrite existing files. ReMinori's UTF-8 port saves for GBK scripts are
+The original Windows eden executable keeps its saves under
+`Documents\minori\<title>\` (the English edition uses
+`Documents\minori\eden (English edition)\`), not `userdata/`. To use original
+saves in ReMinori, copy `edenNNNN.sav`/`edenNNNN.png` and `system.dat` from that
+directory into the active `userdata/` directory. To move compatible
+retail-format saves back, copy them the other way. Back up both directories and
+do not overwrite existing files. ReMinori's UTF-8 port saves for GBK scripts are
 not retail-format saves and should not be assumed compatible with original eden.
 ShinkiEMU beta.1/beta.2 required a user-chosen `save_directory`; copy the files
 from that directory into the active `userdata/` directory by hand, without
